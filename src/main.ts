@@ -22,7 +22,7 @@ interface IHandshakeMessage {
   outFields?: string[]
 }
 
-const BROADCAST_INTERVAL = 75;
+const BROADCAST_INTERVAL = 50;
 
 class StreamServer extends Server {
   constructor(options: ServerOptions & StreamServerOptions) {

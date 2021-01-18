@@ -30,8 +30,7 @@ export interface FeatureSet<T> {
 export interface MockServiceConfig {
   trackedAssets: number,
   pageSize: number,
-  distStep: number,
-  extrudePolygons: boolean
+  distStep: number
 }
 
 
@@ -46,10 +45,9 @@ export class MockService {
 
   private static _defaults(): MockServiceConfig {
     return {
-      trackedAssets: 100000, // number of points
+      trackedAssets: 50000, // number of points
       pageSize: 10000,       // how many points to update in one cycle
-      distStep: 0.05 * 15,   // speed
-      extrudePolygons: false,
+      distStep: 0.05 * 2    // speed
     }
   }
 
@@ -68,22 +66,17 @@ export class MockService {
   next(): string {
     const polylines = this._polylines;
     const { pageSize, trackedAssets } = this._config;
-    const outFeatures: (PointFeature | PolygonFeature)[] = [];
     const start = this._nextPage() * pageSize;
     const end = Math.min(start + pageSize, trackedAssets);
+    const outFeatures: (PointFeature | PolygonFeature)[] = new Array<PointFeature | PolygonFeature>(end - start);
     
     if (start === 0) {
       this._updatePositions(polylines);
     }
     
+    const lastObservations = this._lastObservations;
     for (let i = start; i < end; i++) {
-      const feature = this._lastObservations[i];
-
-      if (this._config.extrudePolygons) {
-        outFeatures.push(this._extrudePolygon(feature));  
-      } else {
-        outFeatures.push(feature);  
-      }
+      outFeatures[i] = lastObservations[i];
     }
 
     return JSON.stringify({
@@ -138,7 +131,8 @@ export class MockService {
         attributes: {
           OBJECTID: this._createId(),
           TRACKID: i / 4,
-          HEADING: getAzimuth(x1 - x0, y1 - y0)
+          HEADING: getAzimuth(x1 - x0, y1 - y0),
+          TYPE: Math.round(Math.random() * 5)
         },
         geometry: { x, y }
       })
@@ -222,30 +216,6 @@ export class MockService {
     }
 
     return this._page;
-  }
-
-
-  private _extrudePolygon(feature: PointFeature): PolygonFeature {
-    // Create a quad
-    const width = 2500;
-    const x = feature.geometry.x;
-    const y = feature.geometry.y;
-    
-    return {
-      attributes: feature.attributes,
-      geometry: {
-        rings: [
-          [
-            [x - width, y + width],
-            [x + width, y + width],
-            [x + width, y - width],
-            [x - width, y - width],
-            [x - width, y + width]
-          ]
-        ]
-      }
-    }
-    
   }
 
   private _createId(): number {
