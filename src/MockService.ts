@@ -87,45 +87,33 @@ export class MockService {
 
   private _initialize(polylines: FeatureSet<Polyline>): void {
     const vertexPositions = this._vertexPositions;
-    const vertexSum = this._sumPolylineVertices(polylines);
-    const vertsPerAsset = vertexSum / this._config.trackedAssets;
-
-    let vertexPos = 0;
-
-    for (let featureIndex = 0; featureIndex < polylines.features.length; featureIndex++) {
-      const feature = polylines.features[featureIndex];
-      const paths = feature.geometry.paths;
-
-      for (let pathIndex = 0; pathIndex < paths.length; pathIndex++) {
-        const path = paths[pathIndex];
-
-        for (let vertPos = 0; vertPos < (path.length - 1); vertPos += vertsPerAsset) {
-          const vertIndex = Math.floor(vertexPos);
-          const dist = vertexPos - vertIndex;
-
-          vertexPositions.push(featureIndex);
-          vertexPositions.push(pathIndex);
-          vertexPositions.push(vertIndex);
-          vertexPositions.push(dist);
-        }
-      }
-    }
+    const config = this._config;
+    const numOfTrackedAssets = Math.min(config.trackedAssets, polylines.features.length);
 
     let heading: number;
-    for (let i = 0; i < vertexPositions.length; i += 4) {
-      const featureIndex = vertexPositions[i]
-      const pathIndex = vertexPositions[i + 1]
-      const vertIndex = vertexPositions[i + 2]
-      const dist = vertexPositions[i + 3]
-      const paths = polylines.features[featureIndex].geometry.paths;
-      const vertex = paths[pathIndex][vertIndex];
-      const vertexNext = paths[pathIndex][vertIndex + 1];
+    for (let i = 0; i < numOfTrackedAssets; i++) {
+      const feature = polylines.features[i];
+      const path = feature.geometry.paths[0];
+      if (path.length < 2) {
+        continue;
+      }
+
+      const vertex = path[0];
+      const vertexNext = path[1];
       const x0 = vertex[0];
       const y0 = vertex[1];
       const x1 = vertexNext[0];
       const y1 = vertexNext[1];
-      const x = x0 + (x1 - x0) * dist;
-      const y = y0 + (y1 - y0) * dist;          
+      const dist = Math.sqrt((x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0));
+      const speed = dist / config.distStep;
+            
+      vertexPositions.push(
+        i, // feature index 
+        0, // current vertex index
+        dist, // distance to the next vertex 
+        0, // accumulated distance (to the next vertex)
+        speed // speed
+        );
       
       this._lastObservations.push({
         attributes: {
@@ -134,7 +122,7 @@ export class MockService {
           HEADING: getAzimuth(x1 - x0, y1 - y0),
           TYPE: Math.round(Math.random() * 5)
         },
-        geometry: { x, y }
+        geometry: { x: x0, y: y0 }
       })
     }
   }
@@ -155,28 +143,27 @@ export class MockService {
 
   private _updatePositions(polylines: FeatureSet<Polyline>): void {
     const vertexPositions = this._vertexPositions;    
-    for (let i = 0; i < vertexPositions.length; i += 4) {
-      const featureIndex = vertexPositions[i]
-      const pathIndex = vertexPositions[i + 1]
+    for (let i = 0; i < vertexPositions.length; i += 5) {
+      const featureIndex = vertexPositions[i];
+      let vertexIndex = vertexPositions[i + 1];
+      let distanceToNextVertex = vertexPositions[i + 2];
+      let accumulatedDistance = vertexPositions[i + 3];
+      let speed = vertexPositions[i + 4];
 
-      let vertIndex = vertexPositions[i + 2]
-
-      const dist = vertexPositions[i + 3]
-      const paths = polylines.features[featureIndex].geometry.paths;
-
-      if (!paths[pathIndex]) {
-        return;  
-      }
       
-      const vertex = paths[pathIndex][vertIndex];
-      const vertexNext = paths[pathIndex][vertIndex + 1];
-      const x0 = vertex[0];
-      const y0 = vertex[1];
-      const x1 = vertexNext[0];
-      const y1 = vertexNext[1];
-      const x = x0 + (x1 - x0) * dist;
-      const y = y0 + (y1 - y0) * dist;
-      const index = i / 4;
+      const path = polylines.features[featureIndex].geometry.paths[0];
+      let vertex = path[vertexIndex];
+      let vertexNext = path[vertexIndex + 1];
+      let x0 = vertex[0];
+      let y0 = vertex[1];
+      let x1 = vertexNext[0];
+      let y1 = vertexNext[1];      
+      const index = i / 5;
+
+      let nextDist = accumulatedDistance + speed;
+      const distanceRatio = nextDist / distanceToNextVertex;
+      const x = x0 + (x1 - x0) * distanceRatio;
+      const y = y0 + (y1 - y0) * distanceRatio;
       
       const geometry = this._lastObservations[index].geometry;
       const attributes = this._lastObservations[index].attributes;
@@ -187,22 +174,32 @@ export class MockService {
       geometry.x = x;
       geometry.y = y;
 
-      let nextDist = dist + this._config.distStep;
+      vertexPositions[i + 3] = nextDist
       
-      if (nextDist >= 1.0) {
-        // Move to nexxt vertex
-        nextDist = 0;
-        vertIndex += 1;
+      // test if we need to move to the next vertex
+      if (nextDist + speed >= distanceToNextVertex) {
+        
+        vertexIndex++;
 
         // If we reach the end, loop back ground
-        if (vertIndex >= (paths[pathIndex].length - 1))  {
-          vertIndex = 0;
+        if (vertexIndex >= (path.length - 1))  {
+          vertexIndex = 0;
         }
+
+        vertex = path[0];
+        vertexNext = path[1];
+        x0 = vertex[0];
+        y0 = vertex[1];
+        x1 = vertexNext[0];
+        y1 = vertexNext[1];
+        const dist = Math.sqrt((x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0));
+        speed = dist / this._config.distStep;
+
+        vertexPositions[i + 1] = vertexIndex;
+        vertexPositions[i + 2] = dist;
+        vertexPositions[i + 3] = 0;
+        vertexPositions[i + 4] = speed;
       }
-
-      vertexPositions[i + 2] = vertIndex;
-      vertexPositions[i + 3] = nextDist
-
     }
   }
 
