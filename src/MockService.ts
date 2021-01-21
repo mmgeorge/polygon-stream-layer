@@ -33,6 +33,7 @@ export interface MockServiceConfig {
   distStep: number
 }
 
+const getAzimuth = (dx: number, dy: number) => Math.atan2(dy, dx) - Math.PI / 2;
 
 /** 
  * MockService that will output either point or polygon features with a geometry and 
@@ -45,7 +46,7 @@ export class MockService {
 
   private static _defaults(): MockServiceConfig {
     return {
-      trackedAssets: 100000, // number of points
+      trackedAssets: 40000,  // number of points
       pageSize: 10000,       // how many points to update in one cycle
       distStep: 0.05         // speed
     }
@@ -86,45 +87,71 @@ export class MockService {
   }
 
   private _initialize(polylines: FeatureSet<Polyline>): void {
+    const vertexSum = this._sumPolylineVertices(polylines);    
     const trackInfos = this._trackInfos;
     const config = this._config;
-    const numOfTrackedAssets = Math.min(config.trackedAssets, polylines.features.length);
+    const numOfTrackedAssets = config.trackedAssets;    
 
     let heading: number;
-    for (let i = 0; i < numOfTrackedAssets; i++) {
-      const feature = polylines.features[i];
-      const path = feature.geometry.paths[0];
-      if (path.length < 2) {
-        continue;
+    let featureIndex = 0;
+    let trackIndex = 0;    
+    while (trackIndex < numOfTrackedAssets) {  
+      const feature = polylines.features[featureIndex];
+      if (!feature) {
+        console.log(`index out of bounds! Feature Index is ${featureIndex}. Num of tracks is: ${trackIndex}`);
+        break;
+      }
+      
+      const polyline = feature.geometry;
+      const numberOfVertices = this._getNumberOfVertices(polyline);      
+      const numOfTracksPerFeature = Math.max(Math.floor(numOfTrackedAssets * numberOfVertices / vertexSum), 1);
+      const vertexNumBetweenTracks = Math.floor(0.8 * numberOfVertices / numOfTracksPerFeature);      
+
+      let currentPath = 0;
+      let currentVertex = 0;
+      for (let numTrack = 0; numTrack < numOfTracksPerFeature; numTrack++) {
+        let path = polyline.paths[currentPath];        
+
+        const vertex = path[currentVertex];
+        const vertexNext = path[currentVertex + 1];        
+        
+        const x0 = vertex[0];
+        const y0 = vertex[1];
+        const x1 = vertexNext[0];
+        const y1 = vertexNext[1];
+        const dist = Math.sqrt((x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0));
+        const speed = config.distStep / dist;
+              
+        trackInfos.push(
+          featureIndex, // feature index
+          currentPath,    // path index
+          currentVertex,    // current vertex index
+          dist, // distance to the next vertex 
+          0,    // accumulated distance (to the next vertex)
+          speed // speed
+          );
+        
+        this._lastObservations.push({
+          attributes: {
+            OBJECTID: this._createId(),
+            TRACKID: trackIndex++,
+            HEADING: getAzimuth(x1 - x0, y1 - y0),
+            TYPE: Math.round(Math.random() * 5)
+          },
+          geometry: { x: x0, y: y0 }
+        });
+        
+        const nextStart = this._getNextTrackStart(polyline, vertexNumBetweenTracks, currentPath, currentVertex);
+        if (!nextStart) {          
+          break;
+        }
+
+        currentPath = nextStart.pathIndex;
+        currentVertex = nextStart.vertexIndex;
       }
 
-      const vertex = path[0];
-      const vertexNext = path[1];
-      const x0 = vertex[0];
-      const y0 = vertex[1];
-      const x1 = vertexNext[0];
-      const y1 = vertexNext[1];
-      const dist = Math.sqrt((x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0));
-      const speed = config.distStep;
-            
-      trackInfos.push(
-        i, // feature index
-        0,
-        0, // current vertex index
-        dist, // distance to the next vertex 
-        0, // accumulated distance (to the next vertex)
-        speed // speed
-        );
-      
-      this._lastObservations.push({
-        attributes: {
-          OBJECTID: this._createId(),
-          TRACKID: i,
-          HEADING: getAzimuth(x1 - x0, y1 - y0),
-          TYPE: Math.round(Math.random() * 5)
-        },
-        geometry: { x: x0, y: y0 }
-      })
+      currentVertex = 0;
+      featureIndex++;
     }
   }
 
@@ -216,10 +243,44 @@ export class MockService {
     this._idCounter = ((this._idCounter + 1) % 0xfffffffe); // force nonzero u32
     return id;
   }
-}
 
-function getAzimuth(dx: number, dy: number): number {
-  return Math.atan2(dy, dx) - Math.PI / 2;
-}
+  private _sumPolylineVertices(polylines: FeatureSet<Polyline>): number {
+    let sum = 0;
+    
+    for (const feature of polylines.features) {
+      const paths = feature.geometry.paths;
 
+      for (const path of paths) {
+        sum += path.length;
+      }
+    }
+
+    return sum;
+  }
+
+  private _getNumberOfVertices(polyline: Polyline): number {
+    const paths = polyline.paths;
+    let sum = 0;
+    for (const path of paths) {
+      sum += path.length;
+    }
+
+    return sum;
+  }
+
+  private _getNextTrackStart(polyline: Polyline, vertexNumBetweenTracks: number, currentPath: number, currentVertex: number): { pathIndex: number, vertexIndex: number} {
+    const path = polyline.paths[currentPath];
+    if (vertexNumBetweenTracks + currentVertex < path.length - 1) {
+      return { pathIndex: currentPath,  vertexIndex: vertexNumBetweenTracks + currentVertex };
+    }
+
+    currentPath++;
+
+    if (currentPath >= polyline.paths.length || polyline.paths[currentPath].length < 2) {            
+      return null;
+    }
+
+    return { pathIndex: currentPath,  vertexIndex: 0 };
+  }
+}
 
