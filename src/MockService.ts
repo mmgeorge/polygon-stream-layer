@@ -46,9 +46,9 @@ export class MockService {
 
   private static _defaults(): MockServiceConfig {
     return {
-      trackedAssets: 40000,  // number of points
+      trackedAssets: 10000,  // number of points
       pageSize: 10000,       // how many points to update in one cycle
-      distStep: 0.05         // speed
+      distStep: 0.001         // speed
     }
   }
 
@@ -199,8 +199,8 @@ export class MockService {
 
         // If we reach the end, loop back ground
         if (vertexIndex >= (path.length - 1))  {
-          if ((paths.length -1) > pathIndex) {            
-            path = paths[pathIndex++];            
+          if (pathIndex < (paths.length -1)) {            
+            path = paths[pathIndex++];       
           } else {
             pathIndex = 0;
           }
@@ -219,8 +219,7 @@ export class MockService {
 
         trackInfos[i + 2] = vertexIndex;
         trackInfos[i + 3] = dist;
-        trackInfos[i + 4] = 0;
-        //trackInfos[i + 5] = speed;
+        trackInfos[i + 4] = 0;        
       }
     }
   }
