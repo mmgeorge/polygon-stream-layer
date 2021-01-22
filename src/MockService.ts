@@ -33,6 +33,7 @@ export interface MockServiceConfig {
   distStep: number
 }
 
+const getAzimuth = (dx: number, dy: number) => Math.atan2(dy, dx) - Math.PI / 2;
 
 /** 
  * MockService that will output either point or polygon features with a geometry and 
@@ -45,9 +46,9 @@ export class MockService {
 
   private static _defaults(): MockServiceConfig {
     return {
-      trackedAssets: 50000, // number of points
+      trackedAssets: 10000,  // number of points
       pageSize: 10000,       // how many points to update in one cycle
-      distStep: 0.05 * 2    // speed
+      distStep: 0.001         // speed
     }
   }
 
@@ -55,7 +56,7 @@ export class MockService {
   private _page = 0;
   private _config: MockServiceConfig
   private _lastObservations: PointFeature[] = [];
-  private _vertexPositions: number[] = []
+  private _trackInfos: number[] = []
   private _polylines: FeatureSet<Polyline>
 
   initialize(polylines: FeatureSet<Polyline>): void {
@@ -86,57 +87,160 @@ export class MockService {
   }
 
   private _initialize(polylines: FeatureSet<Polyline>): void {
-    const vertexPositions = this._vertexPositions;
-    const vertexSum = this._sumPolylineVertices(polylines);
-    const vertsPerAsset = vertexSum / this._config.trackedAssets;
-
-    let vertexPos = 0;
-
-    for (let featureIndex = 0; featureIndex < polylines.features.length; featureIndex++) {
-      const feature = polylines.features[featureIndex];
-      const paths = feature.geometry.paths;
-
-      for (let pathIndex = 0; pathIndex < paths.length; pathIndex++) {
-        const path = paths[pathIndex];
-
-        for (let vertPos = 0; vertPos < (path.length - 1); vertPos += vertsPerAsset) {
-          const vertIndex = Math.floor(vertexPos);
-          const dist = vertexPos - vertIndex;
-
-          vertexPositions.push(featureIndex);
-          vertexPositions.push(pathIndex);
-          vertexPositions.push(vertIndex);
-          vertexPositions.push(dist);
-        }
-      }
-    }
+    const vertexSum = this._sumPolylineVertices(polylines);    
+    const trackInfos = this._trackInfos;
+    const config = this._config;
+    const numOfTrackedAssets = config.trackedAssets;    
 
     let heading: number;
-    for (let i = 0; i < vertexPositions.length; i += 4) {
-      const featureIndex = vertexPositions[i]
-      const pathIndex = vertexPositions[i + 1]
-      const vertIndex = vertexPositions[i + 2]
-      const dist = vertexPositions[i + 3]
-      const paths = polylines.features[featureIndex].geometry.paths;
-      const vertex = paths[pathIndex][vertIndex];
-      const vertexNext = paths[pathIndex][vertIndex + 1];
-      const x0 = vertex[0];
-      const y0 = vertex[1];
-      const x1 = vertexNext[0];
-      const y1 = vertexNext[1];
-      const x = x0 + (x1 - x0) * dist;
-      const y = y0 + (y1 - y0) * dist;          
+    let featureIndex = 0;
+    let trackIndex = 0;    
+    while (trackIndex < numOfTrackedAssets) {  
+      const feature = polylines.features[featureIndex];
+      if (!feature) {
+        console.log(`index out of bounds! Feature Index is ${featureIndex}. Num of tracks is: ${trackIndex}`);
+        break;
+      }
       
-      this._lastObservations.push({
-        attributes: {
-          OBJECTID: this._createId(),
-          TRACKID: i / 4,
-          HEADING: getAzimuth(x1 - x0, y1 - y0),
-          TYPE: Math.round(Math.random() * 5)
-        },
-        geometry: { x, y }
-      })
+      const polyline = feature.geometry;
+      const numberOfVertices = this._getNumberOfVertices(polyline);      
+      const numOfTracksPerFeature = Math.max(Math.floor(numOfTrackedAssets * numberOfVertices / vertexSum), 1);
+      const vertexNumBetweenTracks = Math.floor(0.8 * numberOfVertices / numOfTracksPerFeature);      
+
+      let currentPath = 0;
+      let currentVertex = 0;
+      for (let numTrack = 0; numTrack < numOfTracksPerFeature; numTrack++) {
+        let path = polyline.paths[currentPath];        
+
+        const vertex = path[currentVertex];
+        const vertexNext = path[currentVertex + 1];        
+        
+        const x0 = vertex[0];
+        const y0 = vertex[1];
+        const x1 = vertexNext[0];
+        const y1 = vertexNext[1];
+        const dist = Math.sqrt((x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0));
+        const speed = config.distStep / dist;
+              
+        trackInfos.push(
+          featureIndex, // feature index
+          currentPath,    // path index
+          currentVertex,    // current vertex index
+          dist, // distance to the next vertex 
+          0,    // accumulated distance (to the next vertex)
+          speed // speed
+          );
+        
+        this._lastObservations.push({
+          attributes: {
+            OBJECTID: this._createId(),
+            TRACKID: trackIndex++,
+            HEADING: getAzimuth(x1 - x0, y1 - y0),
+            TYPE: Math.round(Math.random() * 5)
+          },
+          geometry: { x: x0, y: y0 }
+        });
+        
+        const nextStart = this._getNextTrackStart(polyline, vertexNumBetweenTracks, currentPath, currentVertex);
+        if (!nextStart) {          
+          break;
+        }
+
+        currentPath = nextStart.pathIndex;
+        currentVertex = nextStart.vertexIndex;
+      }
+
+      currentVertex = 0;
+      featureIndex++;
     }
+  }
+
+  private _updatePositions(polylines: FeatureSet<Polyline>): void {
+    const trackInfos = this._trackInfos;    
+    for (let i = 0; i < trackInfos.length; i += 6) {
+      const featureIndex = trackInfos[i];
+      let pathIndex = trackInfos[i + 1];
+      let vertexIndex = trackInfos[i + 2];
+      let distanceToNextVertex = trackInfos[i + 3];
+      let accumulatedDistance = trackInfos[i + 4];
+      let speed = trackInfos[i + 5];
+
+      
+      const paths = polylines.features[featureIndex].geometry.paths;
+      let path = paths[pathIndex];
+      let vertex = path[vertexIndex];
+      let vertexNext = path[vertexIndex + 1];
+      let x0 = vertex[0];
+      let y0 = vertex[1];
+      let x1 = vertexNext[0];
+      let y1 = vertexNext[1];      
+      const index = i / 6;
+
+      let nextDist = accumulatedDistance + speed;
+      const distanceRatio = nextDist / distanceToNextVertex;
+      const x = x0 + (x1 - x0) * distanceRatio;
+      const y = y0 + (y1 - y0) * distanceRatio;
+      
+      const geometry = this._lastObservations[index].geometry;
+      const attributes = this._lastObservations[index].attributes;
+
+      attributes.OBJECTID = this._createId(); // New observation needs new oid
+      attributes.HEADING = getAzimuth(x1 - x0, y1 - y0);
+      
+      geometry.x = x;
+      geometry.y = y;
+
+      trackInfos[i + 3] = nextDist
+      
+      // test if we need to move to the next vertex
+      if ((nextDist + speed) >= distanceToNextVertex) {
+        
+        vertexIndex++;
+
+        // If we reach the end, loop back ground
+        if (vertexIndex >= (path.length - 1))  {
+          if (pathIndex < (paths.length -1)) {            
+            path = paths[pathIndex++];       
+          } else {
+            pathIndex = 0;
+          }
+
+          trackInfos[i + 1] = pathIndex;
+          vertexIndex = 0;
+        }
+
+        vertex = path[vertexIndex];
+        vertexNext = path[vertexIndex + 1];
+        x0 = vertex[0];
+        y0 = vertex[1];
+        x1 = vertexNext[0];
+        y1 = vertexNext[1];
+        const dist = Math.sqrt((x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0));
+
+        trackInfos[i + 2] = vertexIndex;
+        trackInfos[i + 3] = dist;
+        trackInfos[i + 4] = 0;        
+      }
+    }
+  }
+
+  private _nextPage (): number {
+    const { trackedAssets,  pageSize } = this._config;
+    const page = this._page;
+    if ((page + 1) * pageSize >= trackedAssets) {
+      this._page = 0;
+    } else {
+      this._page++;
+    }
+
+    return page;
+  }
+
+  private _createId(): number {
+    const id = this._idCounter;
+    
+    this._idCounter = ((this._idCounter + 1) % 0xfffffffe); // force nonzero u32
+    return id;
   }
 
   private _sumPolylineVertices(polylines: FeatureSet<Polyline>): number {
@@ -153,81 +257,29 @@ export class MockService {
     return sum;
   }
 
-  private _updatePositions(polylines: FeatureSet<Polyline>): void {
-    const vertexPositions = this._vertexPositions;    
-    for (let i = 0; i < vertexPositions.length; i += 4) {
-      const featureIndex = vertexPositions[i]
-      const pathIndex = vertexPositions[i + 1]
-
-      let vertIndex = vertexPositions[i + 2]
-
-      const dist = vertexPositions[i + 3]
-      const paths = polylines.features[featureIndex].geometry.paths;
-
-      if (!paths[pathIndex]) {
-        return;  
-      }
-      
-      const vertex = paths[pathIndex][vertIndex];
-      const vertexNext = paths[pathIndex][vertIndex + 1];
-      const x0 = vertex[0];
-      const y0 = vertex[1];
-      const x1 = vertexNext[0];
-      const y1 = vertexNext[1];
-      const x = x0 + (x1 - x0) * dist;
-      const y = y0 + (y1 - y0) * dist;
-      const index = i / 4;
-      
-      const geometry = this._lastObservations[index].geometry;
-      const attributes = this._lastObservations[index].attributes;
-
-      attributes.OBJECTID = this._createId(); // New observation needs new oid
-      attributes.HEADING = getAzimuth(x1 - x0, y1 - y0);
-      
-      geometry.x = x;
-      geometry.y = y;
-
-      let nextDist = dist + this._config.distStep;
-      
-      if (nextDist >= 1.0) {
-        // Move to nexxt vertex
-        nextDist = 0;
-        vertIndex += 1;
-
-        // If we reach the end, loop back ground
-        if (vertIndex >= (paths[pathIndex].length - 1))  {
-          vertIndex = 0;
-        }
-      }
-
-      vertexPositions[i + 2] = vertIndex;
-      vertexPositions[i + 3] = nextDist
-
-    }
-  }
-
-  private _nextPage (): number {
-    this._page++;
-    
-    const maxPage = Math.ceil(this._config.trackedAssets / this._config.pageSize);
-
-    if (this._page >= maxPage) {
-      this._page = 0;
+  private _getNumberOfVertices(polyline: Polyline): number {
+    const paths = polyline.paths;
+    let sum = 0;
+    for (const path of paths) {
+      sum += path.length;
     }
 
-    return this._page;
+    return sum;
   }
 
-  private _createId(): number {
-    const id = this._idCounter;
-    
-    this._idCounter = ((this._idCounter + 1) % 0xfffffffe); // force nonzero u32
-    return id;
+  private _getNextTrackStart(polyline: Polyline, vertexNumBetweenTracks: number, currentPath: number, currentVertex: number): { pathIndex: number, vertexIndex: number} {
+    const path = polyline.paths[currentPath];
+    if (vertexNumBetweenTracks + currentVertex < path.length - 1) {
+      return { pathIndex: currentPath,  vertexIndex: vertexNumBetweenTracks + currentVertex };
+    }
+
+    currentPath++;
+
+    if (currentPath >= polyline.paths.length || polyline.paths[currentPath].length < 2) {            
+      return null;
+    }
+
+    return { pathIndex: currentPath,  vertexIndex: 0 };
   }
 }
-
-function getAzimuth(dx: number, dy: number): number {
-  return Math.atan2(dy, dx) - Math.PI / 2;
-}
-
 
