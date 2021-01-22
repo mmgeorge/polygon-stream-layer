@@ -48,7 +48,7 @@ export class MockService {
     return {
       trackedAssets: 10000,  // number of points
       pageSize: 10000,       // how many points to update in one cycle
-      distStep: 0.001         // speed
+      distStep: 0.01 * 2       // speed, as percentage of the segment
     }
   }
 
@@ -120,7 +120,7 @@ export class MockService {
         const x1 = vertexNext[0];
         const y1 = vertexNext[1];
         const dist = Math.sqrt((x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0));
-        const speed = config.distStep / dist;
+        const speed = dist * config.distStep;
               
         trackInfos.push(
           featureIndex, // feature index
@@ -190,7 +190,7 @@ export class MockService {
       geometry.x = x;
       geometry.y = y;
 
-      trackInfos[i + 3] = nextDist
+      trackInfos[i + 4] = nextDist
       
       // test if we need to move to the next vertex
       if ((nextDist + speed) >= distanceToNextVertex) {
