@@ -34,6 +34,9 @@ export interface MockServiceConfig {
 }
 
 const getAzimuth = (dx: number, dy: number) => Math.atan2(dy, dx) - Math.PI / 2;
+const getIsActive = () => Math.random() < 0.05 ? 1 : 0;
+
+const NumCyclesBetweenActiveUpdate = 400;
 
 /** 
  * MockService that will output either point or polygon features with a geometry and 
@@ -58,6 +61,7 @@ export class MockService {
   private _lastObservations: PointFeature[] = [];
   private _trackInfos: number[] = []
   private _polylines: FeatureSet<Polyline>
+  private _numCyclesSinceLastActiveUpdate = 0;
 
   initialize(polylines: FeatureSet<Polyline>): void {
     this._polylines = polylines;
@@ -128,15 +132,16 @@ export class MockService {
           currentVertex,    // current vertex index
           dist, // distance to the next vertex 
           0,    // accumulated distance (to the next vertex)
-          speed // speed
+          speed, // speed
           );
         
         this._lastObservations.push({
           attributes: {
-            OBJECTID: this._createId(),
+            OBJECTID: this._createId(),            
             TRACKID: trackIndex++,
             HEADING: getAzimuth(x1 - x0, y1 - y0),
-            TYPE: Math.round(Math.random() * 5)
+            TYPE: Math.round(Math.random() * 5),
+            ACTIVE: getIsActive()
           },
           geometry: { x: x0, y: y0 }
         });
@@ -156,7 +161,8 @@ export class MockService {
   }
 
   private _updatePositions(polylines: FeatureSet<Polyline>): void {
-    const trackInfos = this._trackInfos;    
+    const trackInfos = this._trackInfos;
+    this._numCyclesSinceLastActiveUpdate++   
     for (let i = 0; i < trackInfos.length; i += 6) {
       const featureIndex = trackInfos[i];
       let pathIndex = trackInfos[i + 1];
@@ -186,6 +192,10 @@ export class MockService {
 
       attributes.OBJECTID = this._createId(); // New observation needs new oid
       attributes.HEADING = getAzimuth(x1 - x0, y1 - y0);
+
+       if (this._numCyclesSinceLastActiveUpdate === NumCyclesBetweenActiveUpdate) {
+         attributes.ACTIVE = getIsActive();
+       }
       
       geometry.x = x;
       geometry.y = y;
@@ -221,6 +231,10 @@ export class MockService {
         trackInfos[i + 3] = dist;
         trackInfos[i + 4] = 0;        
       }
+    }
+
+    if (this._numCyclesSinceLastActiveUpdate >= NumCyclesBetweenActiveUpdate) {
+      this._numCyclesSinceLastActiveUpdate = 0;
     }
   }
 
