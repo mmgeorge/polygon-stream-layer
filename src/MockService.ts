@@ -30,13 +30,40 @@ export interface FeatureSet<T> {
 export interface MockServiceConfig {
   trackedAssets: number,
   pageSize: number,
-  distStep: number
+  distStep: number,
+  extrudePolygons: boolean
 }
 
 const getAzimuth = (dx: number, dy: number) => Math.atan2(dy, dx) - Math.PI / 2;
 const getIsActive = () => Math.random() < 0.05 ? 1 : 0;
 
 const NumCyclesBetweenActiveUpdate = 400;
+
+function extrudePolygon(feature: PointFeature): PolygonFeature {
+  // Create a quad
+  const width = 2500;
+  const x = feature.geometry.x;
+  const y = feature.geometry.y;
+
+  return {
+    attributes: feature.attributes,
+    geometry: {
+      rings: [
+        [
+          [x - width, y + width],
+          [x, y + 1.5 * width],
+          [x + width, y + width],
+          [x + 1.5 * width, y],
+          [x + width, y - width],
+          [x, y - 1.5 * width],
+          [x - width, y - width],
+          [x - 1.5 * width, y],
+          [x - width, y + width]
+        ]
+      ]
+    }
+  }
+}
 
 /** 
  * MockService that will output either point or polygon features with a geometry and 
@@ -51,7 +78,8 @@ export class MockService {
     return {
       trackedAssets: 10000,  // number of points
       pageSize: 10000,       // how many points to update in one cycle
-      distStep: 0.01 * 2       // speed, as percentage of the segment
+      distStep: 0.20,       // speed, as percentage of the segment
+      extrudePolygons: true,
     }
   }
 
@@ -80,8 +108,16 @@ export class MockService {
     }
     
     const lastObservations = this._lastObservations;
+
     for (let i = start; i < end; i++) {
-      outFeatures[i] = lastObservations[i];
+      if (this._config.extrudePolygons) {
+        if (lastObservations[i])
+          outFeatures[i] = extrudePolygon(lastObservations[i]);
+      } else {
+        outFeatures[i] = lastObservations[i];
+      }
+      
+      
     }
 
     return JSON.stringify({

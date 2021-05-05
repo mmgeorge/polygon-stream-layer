@@ -1,149 +1,268 @@
 <!DOCTYPE html>
 <html>
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="initial-scale=1, maximum-scale=1,user-scalable=no">
-  <title>Custom Websocket</title>
-  <style>
-    html,
-    body {
-      height: 100%;
-      width: 100%;
-      margin: 0;
-      padding: 0;
-    }
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="initial-scale=1, maximum-scale=1,user-scalable=no">
+    <title>Custom Websocket</title>
+    <style>
+     html,
+     body {
+       height: 100%;
+       width: 100%;
+       margin: 0;
+       padding: 0;
+     }
 
-   #viewDiv {
-      height: 100%;
-      width: 100%;
-    }
+     #viewDiv {
+       height: 100%;
+       width: 100%;
+     }
 
-    body {
-      background-color: #fff;
-      overflow: hidden;
-      font-family: sans-serif;
-    }
+     body {
+       background-color: #fff;
+       overflow: hidden;
+       font-family: sans-serif;
+     }
 
-   #info {
+     #info {
        background: rgb(218 209 220);
-   }
+     }
 
-    #connectionStatus {
-        color: white;
-        background: #e33a3a;
-        padding: 8px 16px;
-        display: none;
-    }
+     #connectionStatus {
+       color: white;
+       background: #e33a3a;
+       padding: 8px 16px;
+       display: none;
+     }
 
-   #updateRate {
+     #updateRate {
        color: rgb(78, 78, 78);
        background: rgb(218 209 220);
        padding: 8px 16px;
        display: none;
-   }
+     }
 
-  </style>
+     .slider {
+       height: 80px;
+       margin: 12px;
+       padding: 8px;
+     }
 
-  <link
-    rel="stylesheet"
-    href="https://js.arcgis.com/next/esri/themes/light/main.css"
-  />
-  <script src="https://js.arcgis.com/next/"></script>
+     .controls {
+       padding: 16px;
+       background: white;
+       width: 200px;
+     }
 
-  <script>
-    var streamLayer;
-    var view;
-    require([
-      "esri/Map",
-      "esri/views/MapView",
-      "esri/layers/StreamLayer",
-    ], function(Map, MapView, StreamLayer) {
-      const layer = new StreamLayer({
-        popupTemplate: {
-          content: "OBJECTID={OBJECTID}, TRACKID={TRACKID}",
-        },
+    </style>
 
-        webSocketUrl: "ws://localhost:8000",
+    <link
+      rel="stylesheet"
+      href="https://js.arcgis.com/next/esri/themes/light/main.css"
+    />
 
-        objectIdField: "OBJECTID",
+    <script src="https://js.arcgis.com/4.19/"></script>
+    
+    
+    <script>
+     require([
+       "esri/Map",
+       "esri/views/MapView",
+       "esri/layers/StreamLayer",
+       "esri/widgets/Slider",
+     ], function(Map, MapView, StreamLayer, Slider) {
+       const layer = new StreamLayer({
+         webSocketUrl: "ws://localhost:8000",
 
-        fields: [
-          {
-            name: "OBJECTID",
-            alias: "ObjectId",
-            type: "oid",
-          },
-          {
-            name: "TRACKID",
-            alias: "TrackId",
-            type: "oid",
-          }
-        ],
+         // Maximum client update rate (ms). Can be used to reduce the update rate to below
+         // a client's capabilities to save battery life
+         //
+         // Note that by default the API will throttle updates for slow clients. You can inspect
+         // this by looking at the `update-rate` event
+         updateInterval: 500,
 
-        timeInfo: {
-          trackIdField: "TRACKID"
-        },
+         objectIdField: "OBJECTID",
 
-        geometryType: "point",
+         popupTemplate: {
+           content: "OBJECTID={OBJECTID}, TRACKID={TRACKID}",
+         },
 
-        maxReconnectionAttempts: 100,
-        maxReconnectionInterval: 10,
+         fields: [
+           {
+             name: "OBJECTID",
+             alias: "ObjectId",
+             type: "oid",
+           },
+           {
+             name: "TRACKID",
+             alias: "TrackId",
+             type: "oid",
+           }
+         ],
 
-        renderer: {
-          type: "simple",
-          symbol: {
-            type: "simple-marker",
-            size: "8px",
-            color: "gray",
-          },
-        },
-      });
+         timeInfo: {
+           trackIdField: "TRACKID"
+         },
 
-      const map = new Map({
-        basemap: "gray",
-        layers: [ layer ]
-      });
+         geometryType: "polygon",
 
-      view = new MapView({
-        container: "viewDiv",
-        zoom: 10,
-        center: [-74.05, 40.71],
-        map,
-      });
+         maxReconnectionAttempts: 100,
+         maxReconnectionInterval: 10,
 
-      view.whenLayerView(layer).then(layerView => {
-        // Display connection status and current update rate
-        const connectionStatusDiv = document.getElementById("connectionStatus");
-        const updateRateDiv = document.getElementById("updateRate");
-        const info = document.getElementById("info");
+         renderer: {
+           type: "simple",
+           symbol: {
+             type: "simple-fill",
+             color: "red",
+             outline: null
+           },
+         },
+       });
 
-        layerView.on("update-rate", (updateRate) => {
-          updateRateDiv.innerHTML = `${updateRate.client} (${updateRate.websocket} service)`
-        })
+       const map = new Map({
+         basemap: "gray-vector",
+         layers: [ layer ]
+       });
 
-        view.ui.add(info, "top-right");
+       const view = new MapView({
+         container: "viewDiv",
+         zoom: 6,
+         center: [-74.05, 40.71],
+         map,
+       });
 
-        connectionStatusDiv.style.display = "inline-flex";
-        updateRateDiv.style.display = "inline-flex";
+       // Slider to control layer opacity
+       const sliderLayerOpacity = new Slider({
+         container: "sliderLayerOpacity",
+         min: 0,
+         max: 100,
+         values: [ 100 ],
+         snapOnClickEnabled: false,
+         visibleElements: {
+           labels: true,
+           rangeLabels: true
+         }
+       })
 
-        layerView.watch("connectionStatus", function(value) {
-          if (value === "connected") {
-            connectionStatusDiv.style.backgroundColor = "#4e4e4e";
-            connectionStatusDiv.innerHTML = "connected";
-          } else {
-            connectionStatusDiv.style.backgroundColor = "orange";
-            connectionStatusDiv.innerHTML = "reconnecting";
-          }
-        });
-      }).catch(e => console.log(e))
-    });
-  </script>
-</head>
-<body>
-  <div id="viewDiv"></div>
-  <div id="info">
-    <div id="connectionStatus" class="esri-widget">Disconnected</div>
-    <div id="updateRate" class="esri-widget">0 (0)</div>
-  </div>
-</body>
+       // Slider to control feature (symbol) opacity
+       const sliderFeatureOpacity = new Slider({
+         container: "sliderFeatureOpacity",
+         min: 0,
+         max: 100,
+         values: [ 100 ],
+         snapOnClickEnabled: false,
+         visibleElements: {
+           labels: true,
+           rangeLabels: true
+         }
+       })
+
+
+       // Slider to control client-side filter
+       const sliderLayerFilter = new Slider({
+         container: "sliderLayerFilter",
+         min: 0,
+         max: 10000,
+         values: [ 0 ],
+         snapOnClickEnabled: false,
+         visibleElements: {
+           labels: true,
+           rangeLabels: true
+         }
+       })
+
+       // Slider to control a client-side effect
+       const sliderLayerEffect = new Slider({
+         container: "sliderLayerEffect",
+         min: 0,
+         max: 10000,
+         values: [ 0 ],
+         snapOnClickEnabled: false,
+         visibleElements: {
+           labels: true,
+           rangeLabels: true
+         }
+       })
+
+       sliderLayerOpacity.on("thumb-drag", (ev) => {
+         layer.opacity = ev.value / 100;
+       })
+
+       sliderFeatureOpacity.on("thumb-drag", (ev) => {
+         const renderer = layer.renderer.clone();
+
+         renderer.symbol.color.a = ev.value / 100;
+         layer.renderer = renderer; 
+       })
+
+       // Add controls div to the map
+       const controls = document.getElementById("controls");
+
+       view.ui.add(controls, "bottom-right")
+
+       // Hookup the update-rate monitor in the top-right of the screen
+       view.whenLayerView(layer).then(layerView => {
+         // Display connection status and current update rate
+         const connectionStatusDiv = document.getElementById("connectionStatus");
+         const updateRateDiv = document.getElementById("updateRate");
+         const info = document.getElementById("info");
+
+         sliderLayerFilter.on("thumb-drag", (ev) => {
+           layerView.filter = {
+             where: `TRACKID > ${ev.value}`
+           }
+         })
+
+         sliderLayerEffect.on("thumb-drag", (ev) => {
+           layerView.effect = {
+             includedEffect: "",
+             excludedEffect: "opacity(20%)",
+             filter: {
+               where: `TRACKID > ${ev.value}`
+             }
+           }
+         })
+
+         layerView.on("update-rate", (updateRate) => {
+           updateRateDiv.innerHTML = `${updateRate.client} (${updateRate.websocket} service)`
+         })
+
+         view.ui.add(info, "top-right");
+
+         connectionStatusDiv.style.display = "inline-flex";
+         updateRateDiv.style.display = "inline-flex";
+
+         layerView.watch("connectionStatus", function(value) {
+           if (value === "connected") {
+             connectionStatusDiv.style.backgroundColor = "#4e4e4e";
+             connectionStatusDiv.innerHTML = "connected";
+           } else {
+             connectionStatusDiv.style.backgroundColor = "orange";
+             connectionStatusDiv.innerHTML = "reconnecting";
+           }
+         });
+       }).catch(e => console.log(e))
+     });
+    </script>
+  </head>
+  <body>
+    <div id="viewDiv"></div>
+    <div id="controls" class="controls">
+      Layer Opacity
+      <div id="sliderLayerOpacity" class="slider"></div>
+
+      Feature Opacity
+      <div id="sliderFeatureOpacity" class="slider"></div>
+
+      Client-side filter<br>
+      <div id="sliderLayerFilter" class="slider"></div>
+
+      Client-side effect<br>
+      <div id="sliderLayerEffect" class="slider"></div>
+    </div>
+    <div id="info">
+      <div id="connectionStatus" class="esri-widget">Disconnected</div>
+      <div id="updateRate" class="esri-widget">0 (0)</div>
+    </div>
+  </body>
 </html>
